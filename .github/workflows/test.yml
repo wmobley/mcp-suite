@@ -1,0 +1,37 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ckan-server:
+    name: CKAN server tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: servers/ckan
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Sync deps
+        run: uv sync --dev
+      - name: Run tests
+        # Integration tests auto-skip when no CKAN portal is reachable.
+        run: uv run pytest -q
+
+  gdal-actor-validators:
+    name: GDAL actor validator tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: servers/geo/gdal-actor
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Run validator unit tests (stdlib-only module)
+        run: uv run --with pytest pytest -q tests/test_validators.py

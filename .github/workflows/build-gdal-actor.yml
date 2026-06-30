@@ -1,0 +1,73 @@
+name: build-gdal-actor
+
+# Build and push the GDAL Abaco actor image to GHCR.
+# Triggers: changes under the actor image, version tags, or manual dispatch.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "servers/geo/gdal-actor/**"
+      - ".github/workflows/build-gdal-actor.yml"
+    tags:
+      - "v*"
+  pull_request:
+    paths:
+      - "servers/geo/gdal-actor/**"
+      - ".github/workflows/build-gdal-actor.yml"
+  workflow_dispatch:
+
+env:
+  # docker/metadata-action lowercases the repository automatically.
+  IMAGE: ghcr.io/${{ github.repository }}/gdal-actor
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        # Skip login on PRs from forks (no package write); build-only there.
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: servers/geo/gdal-actor
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "Pushed image tags:" >> "$GITHUB_STEP_SUMMARY"
+          echo '${{ steps.meta.outputs.tags }}' | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Use one of these as ACTOR_IMAGE in servers/geo/phase0a/check-abaco.sh" >> "$GITHUB_STEP_SUMMARY"
