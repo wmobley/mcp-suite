@@ -96,6 +96,25 @@ class Settings:
         default_factory=lambda: int(os.environ.get("GEO_POLL_RETRIES", "1"))
     )
 
+    # ── Transport ───────────────────────────────────────────────────────────
+    # "stdio" (default) for local MCP clients; "http" so a long-running consumer
+    # (e.g. ckan-agent-api) can connect as an MCP client. HTTP binds to loopback
+    # by default and REQUIRES a shared secret (the server refuses to start in
+    # http mode without one) — because the GEO_TAPIS_TOKEN env fallback grants
+    # ambient Abaco compute to any caller that can reach the port.
+    mcp_transport: str = field(
+        default_factory=lambda: os.environ.get("MCP_TRANSPORT", "stdio").strip().lower()
+    )
+    mcp_http_host: str = field(
+        default_factory=lambda: os.environ.get("MCP_HTTP_HOST", "127.0.0.1")
+    )
+    mcp_http_port: int = field(
+        default_factory=lambda: int(os.environ.get("MCP_HTTP_PORT", "8200"))
+    )
+    mcp_http_shared_secret: str | None = field(
+        default_factory=lambda: os.environ.get("MCP_HTTP_SHARED_SECRET") or None
+    )
+
     @property
     def allowed_ckan_host(self) -> str:
         """Return the effective SSRF-guard hostname (explicit override or CKAN_URL host)."""

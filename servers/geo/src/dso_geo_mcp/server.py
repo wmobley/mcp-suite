@@ -97,10 +97,61 @@ status.register(mcp)
 # ------------------------------------------------------------------
 
 
+def _build_http_app():
+    """Build the Starlette ASGI app for HTTP transport, guarded by a shared secret.
+
+    Every request must carry ``Authorization: Bearer <MCP_HTTP_SHARED_SECRET>``; the secret
+    is mandatory in HTTP mode (``main`` refuses to start without it), so there is no
+    no-auth path here — unlike the CKAN server, because the ``GEO_TAPIS_TOKEN`` env fallback
+    grants ambient Abaco compute to any caller that can reach the port.
+    """
+    from starlette.middleware import Middleware
+    from starlette.responses import JSONResponse
+    from starlette.types import ASGIApp, Receive, Scope, Send
+
+    secret = settings.mcp_http_shared_secret
+
+    class SharedSecretMiddleware:
+        def __init__(self, app: ASGIApp) -> None:
+            self.app = app
+
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            if scope["type"] != "http" or not secret:
+                await self.app(scope, receive, send)
+                return
+            headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
+            import hmac
+
+            if not hmac.compare_digest(headers.get("authorization", ""), f"Bearer {secret}"):
+                await JSONResponse({"error": "unauthorized"}, status_code=401)(scope, receive, send)
+                return
+            await self.app(scope, receive, send)
+
+    return mcp.http_app(middleware=[Middleware(SharedSecretMiddleware)])
+
+
 def main() -> None:
-    """Start the MCP server over stdio (the only supported transport for v1)."""
+    """Start the MCP server. Transport is stdio by default, or HTTP when
+    ``MCP_TRANSPORT=http`` (which requires a shared secret and a loopback bind)."""
     settings.log_startup_banner()
-    mcp.run()
+    if settings.mcp_transport == "http":
+        if not settings.mcp_http_shared_secret:
+            raise SystemExit(
+                "MCP_TRANSPORT=http requires MCP_HTTP_SHARED_SECRET to be set — the geo HTTP "
+                "endpoint must not run unauthenticated (GEO_TAPIS_TOKEN grants ambient compute)."
+            )
+        host = settings.mcp_http_host
+        if host not in {"127.0.0.1", "::1", "localhost"} and settings.geo_tapis_token:
+            raise SystemExit(
+                f"Refusing to start: MCP_HTTP_HOST={host!r} is non-loopback while GEO_TAPIS_TOKEN "
+                "is set — this exposes ambient Abaco compute. Bind 127.0.0.1 or front with an auth proxy."
+            )
+        import uvicorn
+
+        logger.info("Serving Geo MCP over HTTP at http://%s:%d/mcp (auth=shared-secret)", host, settings.mcp_http_port)
+        uvicorn.run(_build_http_app(), host=host, port=settings.mcp_http_port, log_level="info")
+    else:
+        mcp.run()
 
 
 if __name__ == "__main__":
