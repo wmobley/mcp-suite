@@ -1,213 +1,83 @@
 #!/usr/bin/env bash
-# Phase 0b local Docker test for the GDAL actor image.
+# Phase 0b local Docker test for the GDAL actor image — fully offline.
 #
-# Tests (no Abaco / Tapis / CKAN required):
+# Serves the bundled real orthophoto fixture over a range-capable HTTP server
+# and runs the actor over /vsicurl/ (no Abaco / Tapis / CKAN / external egress).
+#
+# Tests:
 #   1. docker build
-#   2. gdalinfo on a public COG URL via /vsicurl/
-#      - asserts JSON output contains CRS and bands
-#   3. cog conversion on the same URL
-#      - asserts output .tif appears in the mounted host dir
+#   2. gdalinfo over /vsicurl/        -> asserts status ok, CRS + bands
+#   3. reproject EPSG:32615 -> 4326   -> asserts an output .tif in the mounted dir
+#   4. cog conversion                 -> asserts output is LAYOUT=COG
 #
-# Skips gracefully if:
-#   - Docker daemon is not available
-#   - No network egress to pull the base image or read the test COG
-#
-# Override the test COG by setting TEST_COG_URL before running:
-#   export TEST_COG_URL="https://your-host.example.com/path/to/file.tif"
-#   ./tests/local_test.sh
-#
-# The default TEST_COG_URL is a publicly-accessible small GeoTIFF on a
-# USGS/NASA-backed COG archive. Change it to any public GeoTIFF if the
-# default is unreachable from your network.
+# Skips gracefully if Docker is unavailable.
+# Override the fixture with TEST_TIF (a path to any GeoTIFF) if desired.
 
 set -euo pipefail
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACTOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 IMAGE_TAG="dso-geo-gdal-actor:test-$$"
-# Small public COG (Landsat 8 OLI, single-band, ~1 MB) from AWS public datasets
-DEFAULT_COG_URL="https://landsat-pds.s3.amazonaws.com/c1/L8/139/045/LC08_L1TP_139045_20170304_20170316_01_T1/LC08_L1TP_139045_20170304_20170316_01_T1_B1.TIF"
-TEST_COG_URL="${TEST_COG_URL:-${DEFAULT_COG_URL}}"
+FIXTURE="${TEST_TIF:-${SCRIPT_DIR}/fixtures/odm_orthophoto.tif}"
+PORT="${TEST_PORT:-8099}"
+URL="http://host.docker.internal:${PORT}/$(basename "${FIXTURE}")"
 
-HOST_OUT_DIR="$(mktemp -d)"
-CONTAINER_OUT_DIR="/data/out"
+pass=0; fail=0
+ok(){ echo "  PASS: $1"; pass=$((pass+1)); }
+no(){ echo "  FAIL: $1"; fail=$((fail+1)); }
 
-pass=0
-fail=0
-skip=0
+echo "== Pre-flight =="
+if ! docker version >/dev/null 2>&1; then echo "  Docker not available — SKIP"; exit 0; fi
+if [ ! -f "${FIXTURE}" ]; then echo "  fixture not found: ${FIXTURE} — SKIP"; exit 0; fi
+echo "  fixture: ${FIXTURE}"
 
-ok()   { echo "  PASS: $1"; pass=$((pass+1)); }
-no()   { echo "  FAIL: $1"; fail=$((fail+1)); }
-skip() { echo "  SKIP: $1"; skip=$((skip+1)); }
-
-cleanup() {
-    echo
-    echo "== Cleanup =="
-    docker rmi -f "${IMAGE_TAG}" >/dev/null 2>&1 || true
-    rm -rf "${HOST_OUT_DIR}"
-}
+WORK="$(mktemp -d)"; cp "${FIXTURE}" "${WORK}/"; OUT="$(mktemp -d)"
+cleanup(){ kill "${SRV:-0}" 2>/dev/null || true; docker rmi -f "${IMAGE_TAG}" >/dev/null 2>&1 || true; rm -rf "${WORK}" "${OUT}"; }
 trap cleanup EXIT
 
-# ---------------------------------------------------------------------------
-# Check: Docker available
-# ---------------------------------------------------------------------------
-echo "== Pre-flight: Docker daemon =="
-if ! docker info >/dev/null 2>&1; then
-    echo "  Docker daemon not available — skipping all Docker tests."
-    echo "  (Install Docker Desktop or start the Docker daemon to run live tests.)"
-    skip "Docker unavailable — all Docker tests skipped"
-    echo
-    echo "== Summary == PASS=${pass} FAIL=${fail} SKIP=${skip}"
-    echo "Code is complete; Docker tests require a running Docker daemon."
-    exit 0
-fi
-echo "  Docker daemon is available."
-
-# ---------------------------------------------------------------------------
-# Check: network egress for base image pull
-# ---------------------------------------------------------------------------
-echo "== Pre-flight: network egress for base image pull =="
-if ! curl -fsS --max-time 10 -o /dev/null "https://ghcr.io/v2/" 2>/dev/null; then
-    echo "  Cannot reach ghcr.io — base image pull will likely fail."
-    echo "  Attempting build anyway (may fail if image is not cached locally)."
-fi
-
-# ---------------------------------------------------------------------------
-# Test 1: docker build
-# ---------------------------------------------------------------------------
-echo
 echo "== Test 1: docker build =="
-if docker build -t "${IMAGE_TAG}" "${ACTOR_DIR}" 2>&1 | tail -5; then
-    ok "docker build succeeded"
-else
-    no "docker build FAILED"
-    echo
-    echo "== Summary == PASS=${pass} FAIL=${fail} SKIP=${skip}"
-    exit 1
-fi
+if docker build -t "${IMAGE_TAG}" "${ACTOR_DIR}" >/tmp/p0b_build.log 2>&1; then ok "image built"; else no "build failed"; tail -5 /tmp/p0b_build.log; exit 1; fi
 
-# ---------------------------------------------------------------------------
-# Pre-flight: network egress for COG URL
-# ---------------------------------------------------------------------------
+# Range-capable static server (stdlib http.server doesn't do Range; this does).
+cat > "${WORK}/rangeserver.py" <<'PY'
+import http.server, functools, os, sys
+D=sys.argv[1]; P=int(sys.argv[2])
+class H(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        p=self.translate_path(self.path)
+        if not os.path.isfile(p): self.send_error(404); return
+        sz=os.path.getsize(p); rng=self.headers.get('Range')
+        with open(p,'rb') as f:
+            if rng and rng.startswith('bytes='):
+                s,_,e=rng[6:].partition('-'); s=int(s or 0); e=int(e) if e else sz-1; e=min(e,sz-1)
+                f.seek(s); data=f.read(e-s+1)
+                self.send_response(206); self.send_header('Content-Range',f'bytes {s}-{e}/{sz}'); self.send_header('Content-Length',str(len(data)))
+            else:
+                data=f.read(); self.send_response(200); self.send_header('Content-Length',str(sz))
+            self.send_header('Accept-Ranges','bytes'); self.send_header('Content-Type','image/tiff'); self.end_headers(); self.wfile.write(data)
+    def do_HEAD(self):
+        p=self.translate_path(self.path)
+        if not os.path.isfile(p): self.send_error(404); return
+        self.send_response(200); self.send_header('Content-Length',str(os.path.getsize(p))); self.send_header('Accept-Ranges','bytes'); self.end_headers()
+    def log_message(self,*a): pass
+http.server.HTTPServer(('0.0.0.0',P),functools.partial(H,directory=D)).serve_forever()
+PY
+python3 "${WORK}/rangeserver.py" "${WORK}" "${PORT}" & SRV=$!; sleep 1
+
+run(){ docker run --rm -v "${OUT}:/data/out" "${IMAGE_TAG}" --message "$1" 2>/dev/null; }
+
+echo "== Test 2: gdalinfo over /vsicurl =="
+r=$(run "{\"operation\":\"gdalinfo\",\"input_url\":\"${URL}\",\"include_stats\":false}")
+echo "${r}" | python3 -c "import sys,json;d=json.load(sys.stdin);m=d.get('metadata') or {};assert d.get('status')=='ok',d;assert len(m.get('bands',[]))>=1;assert m.get('coordinateSystem');print('  size:',m.get('size'),'bands:',len(m.get('bands',[])))" && ok "gdalinfo over /vsicurl" || no "gdalinfo failed: ${r:0:200}"
+
+echo "== Test 3: reproject -> EPSG:4326 =="
+run "{\"operation\":\"reproject\",\"input_url\":\"${URL}\",\"output_name\":\"out_4326.tif\",\"params\":{\"target_crs\":4326}}" >/dev/null
+[ -f "${OUT}/out_4326.tif" ] && ok "reprojected output produced" || no "no reprojected output"
+
+echo "== Test 4: cog conversion =="
+run "{\"operation\":\"cog\",\"input_url\":\"${URL}\",\"output_name\":\"out_cog.tif\",\"params\":{\"compression\":\"deflate\"}}" >/dev/null
+if [ -f "${OUT}/out_cog.tif" ] && docker run --rm --entrypoint gdalinfo -v "${OUT}:/d" "${IMAGE_TAG}" /d/out_cog.tif 2>/dev/null | grep -q "LAYOUT=COG"; then ok "valid COG produced"; else no "COG not produced/valid"; fi
+
 echo
-echo "== Pre-flight: network egress to COG URL =="
-if ! curl -fsS --max-time 15 --range "0-512" -o /dev/null "${TEST_COG_URL}" 2>/dev/null; then
-    echo "  Cannot reach TEST_COG_URL: ${TEST_COG_URL}"
-    echo "  Set TEST_COG_URL to a reachable public GeoTIFF and re-run."
-    skip "COG URL unreachable — /vsicurl/ tests skipped"
-    echo
-    echo "== Summary == PASS=${pass} FAIL=${fail} SKIP=${skip}"
-    exit 0
-fi
-echo "  COG URL reachable: ${TEST_COG_URL}"
-
-# ---------------------------------------------------------------------------
-# Test 2: gdalinfo via /vsicurl/ — assert CRS and bands in output
-# ---------------------------------------------------------------------------
-echo
-echo "== Test 2: gdalinfo /vsicurl/ =="
-
-MSG_GDALINFO=$(python3 -c "import json,sys; print(json.dumps({
-    'operation': 'gdalinfo',
-    'input_url': '${TEST_COG_URL}',
-    'output_name': '',
-    'params': {},
-    'include_stats': False
-}))")
-
-GDALINFO_OUTPUT=$(docker run --rm \
-    -e MSG="${MSG_GDALINFO}" \
-    -v "${HOST_OUT_DIR}:${CONTAINER_OUT_DIR}" \
-    "${IMAGE_TAG}" 2>/dev/null)
-
-echo "  Raw output (first 300 chars): ${GDALINFO_OUTPUT:0:300}"
-
-# Check status = ok
-STATUS=$(echo "${GDALINFO_OUTPUT}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || echo "")
-if [ "${STATUS}" = "ok" ]; then
-    ok "gdalinfo returned status=ok"
-else
-    no "gdalinfo status was not 'ok' (got: ${STATUS})"
-fi
-
-# Check metadata contains coordinate system
-HAS_CRS=$(echo "${GDALINFO_OUTPUT}" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-meta = d.get('metadata', {})
-crs_present = bool(meta.get('coordinateSystem') or meta.get('stac', {}).get('proj:epsg'))
-print('yes' if crs_present else 'no')
-" 2>/dev/null || echo "no")
-if [ "${HAS_CRS}" = "yes" ]; then
-    ok "gdalinfo metadata contains coordinateSystem (CRS)"
-else
-    no "gdalinfo metadata missing coordinateSystem"
-fi
-
-# Check metadata contains bands
-HAS_BANDS=$(echo "${GDALINFO_OUTPUT}" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-meta = d.get('metadata', {})
-bands = meta.get('bands', [])
-print('yes' if bands else 'no')
-" 2>/dev/null || echo "no")
-if [ "${HAS_BANDS}" = "yes" ]; then
-    ok "gdalinfo metadata contains bands"
-else
-    no "gdalinfo metadata missing bands"
-fi
-
-# ---------------------------------------------------------------------------
-# Test 3: cog conversion — assert output .tif produced in mounted dir
-# ---------------------------------------------------------------------------
-echo
-echo "== Test 3: cog conversion (gdal_translate -of COG) =="
-
-COG_OUTPUT_NAME="test_cog_output.tif"
-MSG_COG=$(python3 -c "import json; print(json.dumps({
-    'operation': 'cog',
-    'input_url': '${TEST_COG_URL}',
-    'output_name': '${COG_OUTPUT_NAME}',
-    'params': {'compression': 'deflate'},
-    'include_stats': False
-}))")
-
-COG_OUTPUT=$(docker run --rm \
-    -e MSG="${MSG_COG}" \
-    -e OUTPUT_DIR="${CONTAINER_OUT_DIR}" \
-    -v "${HOST_OUT_DIR}:${CONTAINER_OUT_DIR}" \
-    "${IMAGE_TAG}" 2>/dev/null)
-
-echo "  Raw output (first 300 chars): ${COG_OUTPUT:0:300}"
-
-COG_STATUS=$(echo "${COG_OUTPUT}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || echo "")
-if [ "${COG_STATUS}" = "ok" ]; then
-    ok "cog returned status=ok"
-else
-    no "cog status was not 'ok' (got: ${COG_STATUS})"
-fi
-
-# Check the output file actually exists in the mounted host directory
-if [ -f "${HOST_OUT_DIR}/${COG_OUTPUT_NAME}" ]; then
-    FILE_SIZE=$(wc -c < "${HOST_OUT_DIR}/${COG_OUTPUT_NAME}" | tr -d ' ')
-    ok "output file exists: ${HOST_OUT_DIR}/${COG_OUTPUT_NAME} (${FILE_SIZE} bytes)"
-else
-    no "output file NOT found at ${HOST_OUT_DIR}/${COG_OUTPUT_NAME}"
-    echo "  Contents of host out dir: $(ls -la "${HOST_OUT_DIR}" 2>/dev/null || echo '<empty>')"
-fi
-
-# ---------------------------------------------------------------------------
-# Summary
-# ---------------------------------------------------------------------------
-echo
-echo "== Summary == PASS=${pass} FAIL=${fail} SKIP=${skip}"
-if [ "${fail}" -gt 0 ]; then
-    echo "One or more tests FAILED."
-    exit 1
-fi
-echo "All tests passed."
-exit 0
+echo "== Summary == PASS=${pass} FAIL=${fail}"
+[ "${fail}" -eq 0 ]
