@@ -64,10 +64,15 @@ automatically.
 
 ```bash
 export TAPIS_TOKEN=...        # fresh JWT (see above)
-export ACTOR_IMAGE=...        # an image the tenant can pull (hello-world, then a GDAL image)
+# The GDAL actor image is built + pushed to GHCR by CI (public package):
+export ACTOR_IMAGE=ghcr.io/wmobley/mcp-suite/gdal-actor:latest
 export CKAN_TEST_URL=...      # a CKAN resource download URL for the /vsicurl test
 ./check-abaco.sh
 ```
+
+> The image is public on GHCR, so Abaco can pull it with no registry creds.
+> For checks 5-6 the actor reads input via `/vsicurl/` over HTTP — confirm the
+> Abaco container has outbound egress to the CKAN host.
 
 `check-abaco.sh` walks checks 1–4 (register → execute → poll → cleanup) and
 prints a Go/No-Go summary. Checks 5–7 (egress, `/vsicurl/`, downstream task)
