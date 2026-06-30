@@ -13,16 +13,17 @@ GDAL transform on it with the geo server.
 | **ckan** (`dso-ckan`) | [`servers/ckan/`](servers/ckan/) | Read/search CKAN datasets, inspect scheming schemas, validate metadata, and (token-gated) create/update datasets + upload resources. | Reads anonymous; writes use a Tapis JWT via `X-Tapis-Token`. |
 | **geo** (`dso-geo`) | [`servers/geo/`](servers/geo/) | Run GDAL metadata + transforms (reproject, COG, clip, overviews) on CKAN-hosted rasters via **Tapis Abaco actors**, reading inputs over `/vsicurl/` and registering outputs back to CKAN. | Tapis JWT (per call). |
 
-The CKAN server is implemented and verified (133 tests, live-verified). The geo
-server is at the design + Phase-0 stage: the **GDAL actor image** is built and
-verified offline ([`servers/geo/gdal-actor/`](servers/geo/gdal-actor/)); the
-Tapis-side proof-of-life is the next gate
-([`servers/geo/phase0a/`](servers/geo/phase0a/)).
+Both servers are implemented and tested. The CKAN server is also live-verified.
+For the geo server: Phase-0a **passed** on the live Tapis tenant (the actor
+registers, runs, and returns results over Abaco), and the GDAL actor image is
+validated on real data ([`servers/geo/gdal-actor/`](servers/geo/gdal-actor/)).
+The remaining live step is one end-to-end transform against a TACC-routable
+CKAN URL — see [`servers/geo/README.md`](servers/geo/README.md).
 
 ## Design docs
 
 - [CKAN MCP server spec](docs/design/2026-06-29-ckan-mcp-server.md) — Implemented
-- [Geo (GDAL/Abaco) MCP server spec](docs/design/2026-06-29-geo-actor-mcp-server.md) — Approved
+- [Geo (GDAL/Abaco) MCP server spec](docs/design/2026-06-29-geo-actor-mcp-server.md) — Implemented; Phase-0a passed
 
 ## Quick start (CKAN server)
 
@@ -48,6 +49,39 @@ Register it with your MCP client (absolute path):
 
 Write tools additionally need a Tapis JWT — see
 [`servers/ckan/README.md`](servers/ckan/README.md).
+
+## Quick start (geo server)
+
+One-time: register the persistent Abaco actor (needs a fresh Tapis JWT), then
+use its id as `GEO_ACTOR_ID`:
+
+```bash
+cd servers/geo
+export TAPIS_TOKEN=...                  # fresh Tapis JWT
+./register-actor.sh                     # prints the actor id
+```
+
+Register the server with your MCP client (composes with `dso-ckan`):
+
+```jsonc
+{
+  "mcpServers": {
+    "dso-geo": {
+      "command": "uv",
+      "args": ["run", "--directory", "/abs/path/to/mcp-suite/servers/geo", "dso-geo-mcp"],
+      "env": {
+        "GEO_ACTOR_ID": "<id from register-actor.sh>",
+        "TAPIS_BASE": "https://portals.tapis.io",
+        "CKAN_URL": "https://<your-ckan-host>"
+      }
+    }
+  }
+}
+```
+
+Tools take a CKAN resource/dataset id and a per-call `tapis_token`; transforms
+register the output back to CKAN automatically. See
+[`servers/geo/README.md`](servers/geo/README.md).
 
 ## GDAL actor image (geo server)
 

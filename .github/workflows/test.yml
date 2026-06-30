@@ -23,6 +23,21 @@ jobs:
         # Integration tests auto-skip when no CKAN portal is reachable.
         run: uv run pytest -q
 
+  geo-server:
+    name: Geo server tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: servers/geo
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Sync deps
+        run: uv sync --dev
+      - name: Run tests
+        run: uv run pytest -q
+
   gdal-actor-validators:
     name: GDAL actor validator tests
     runs-on: ubuntu-latest
