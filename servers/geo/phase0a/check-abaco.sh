@@ -73,8 +73,10 @@ echo "== Check 3: Execute (POST /v3/actors/${ACTOR_ID}/messages) =="
 # GDAL operation, e.g.:
 #   export ACTOR_MESSAGE='{"operation":"gdalinfo","input_url":"'"$CKAN_TEST_URL"'","include_stats":false}'
 ACTOR_MESSAGE="${ACTOR_MESSAGE:-phase-0a hello}"
-ex=$(curl -s -m 30 "${hdr[@]}" -X POST "${BASE}/v3/actors/${ACTOR_ID}/messages" \
-       -d "$(python3 -c "import json,os;print(json.dumps({'message':os.environ['ACTOR_MESSAGE']}))")")
+# Pass the message as an argv to python (NOT via os.environ — a bash default
+# assignment is not exported to the child process).
+msg_body=$(python3 -c "import json,sys;print(json.dumps({'message':sys.argv[1]}))" "${ACTOR_MESSAGE}")
+ex=$(curl -s -m 30 "${hdr[@]}" -X POST "${BASE}/v3/actors/${ACTOR_ID}/messages" -d "${msg_body}")
 echo "${ex}" | head -c 400; echo
 # Abaco returns snake_case execution_id (accept camelCase too, just in case).
 EXEC_ID=$(echo "${ex}" | python3 -c "import sys,json;r=json.load(sys.stdin).get('result',{});print(r.get('execution_id') or r.get('executionId') or '')" 2>/dev/null || echo "")
