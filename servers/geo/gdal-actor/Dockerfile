@@ -17,6 +17,16 @@ LABEL org.opencontainers.image.title="dso-geo GDAL actor" \
 # No third-party Python deps: actor.py + register_to_ckan.py use only the
 # standard library, and the GDAL CLIs ship in the base image.
 
+# GDAL /vsicurl tuning for CKAN-style download endpoints (redirects, and
+# servers that may not honor HTTP Range). EMPTY_DIR stops GDAL from probing for
+# sidecar files (.aux.xml/.ovr/...), each of which would be a wasted round-trip
+# against a redirecting/non-range endpoint; no HEAD avoids an extra request;
+# retries smooth over transient proxy hiccups. These are overridable at runtime.
+ENV GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR \
+    CPL_VSIL_CURL_USE_HEAD=NO \
+    GDAL_HTTP_MAX_RETRY=3 \
+    GDAL_HTTP_RETRY_DELAY=1
+
 # Create output directory (overridable via OUTPUT_DIR env var at runtime)
 RUN mkdir -p /data/out
 

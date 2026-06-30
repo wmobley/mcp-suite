@@ -184,7 +184,7 @@ def _run_gdalinfo(
         args,
         capture_output=True,
         text=True,
-        timeout=int(os.environ.get("GDALINFO_TIMEOUT", "60")),
+        timeout=int(os.environ.get("GDALINFO_TIMEOUT", "120")),
         shell=False,
         env=env,
     )
