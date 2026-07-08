@@ -14,18 +14,22 @@ LABEL org.opencontainers.image.title="dso-geo GDAL actor" \
       org.opencontainers.image.description="Abaco actor that runs validated GDAL operations with /vsicurl/ HTTP reads" \
       gdal_version="3.9.2"
 
-# ubuntu-small (Ubuntu 24.04) does not ship pip3, and pip enforces PEP 668
-# (externally-managed-environment). Install pip then pass --break-system-packages
-# so pip can install into the system Python inside the container.
-# rasterio wheels bundle their own GDAL, so no libgdal-dev needed.
+# ubuntu-small ships numpy 1.26.4 via Debian packages. pip cannot uninstall
+# Debian-managed packages (no RECORD file), so installing into the system
+# Python fails. Use a venv to get a clean install of our pinned versions.
 RUN apt-get update -qq && \
-    apt-get install -y --no-install-recommends python3-pip && \
-    rm -rf /var/lib/apt/lists/* && \
-    pip3 install --no-cache-dir --break-system-packages \
-        flopy==3.9.3 \
-        rasterio==1.4.3 \
-        numpy==2.2.6 \
-        shapely==2.1.0
+    apt-get install -y --no-install-recommends python3-pip python3-venv && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+RUN pip install --no-cache-dir \
+    flopy==3.9.3 \
+    rasterio==1.4.3 \
+    numpy==2.2.6 \
+    shapely==2.1.0
 
 # GDAL /vsicurl tuning for CKAN-style download endpoints (redirects, and
 # servers that may not honor HTTP Range). EMPTY_DIR stops GDAL from probing for
