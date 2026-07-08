@@ -1,19 +1,21 @@
 name: build-ckan-mcp
 
 # Build and push the DSO CKAN MCP server image to GHCR, then
-# register or restart the dso-mcp pod on portals.tapis.io.
+# register or restart the dsomcp pod on portals.tapis.io.
 #
-# Required GitHub secrets:
-#   TAPIS_USERNAME        — Tapis portal username
-#   TAPIS_PASSWORD        — Tapis portal password
+# Required GitHub secrets (in the "Tapis Configure" environment):
+#   TAPIS_USERNAME          — Tapis portal username
+#   TAPIS_PASSWORD          — Tapis portal password
 #
 # Optional pod env-var secrets (add as needed):
-#   CKAN_BASE_URL         — CKAN portal URL
-#   MCP_HTTP_SHARED_SECRET — shared secret for MCP HTTP endpoint auth
+#   CKAN_BASE_URL           — CKAN portal URL
+#   MCP_HTTP_SHARED_SECRET  — shared secret for MCP HTTP endpoint auth
 #
 # The GHCR package must be set to PUBLIC so Tapis pods can pull it
 # without image-pull credentials. Set this once via:
 #   GitHub → Packages → ckan-mcp → Package settings → Change visibility
+#
+# Build context: servers/ckan/
 
 on:
   push:
@@ -21,22 +23,25 @@ on:
     paths:
       - "servers/ckan/**"
       - ".github/workflows/build-ckan-mcp.yml"
+      - ".github/scripts/**"
     tags:
       - "v*"
   pull_request:
     paths:
       - "servers/ckan/**"
       - ".github/workflows/build-ckan-mcp.yml"
+      - ".github/scripts/**"
   workflow_dispatch:
 
 env:
   IMAGE: ghcr.io/${{ github.repository }}/ckan-mcp
-  POD_ID: dso-mcp
+  POD_ID: dsomcp
   TAPIS_BASE: https://portals.tapis.io
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    environment: Tapis Configure
     permissions:
       contents: read
       packages: write
@@ -82,70 +87,11 @@ jobs:
         env:
           TAPIS_USERNAME: ${{ secrets.TAPIS_USERNAME }}
           TAPIS_PASSWORD: ${{ secrets.TAPIS_PASSWORD }}
-          # Add optional pod env-var secrets below and reference them in POD_BODY
           CKAN_BASE_URL: ${{ secrets.CKAN_BASE_URL }}
           MCP_HTTP_SHARED_SECRET: ${{ secrets.MCP_HTTP_SHARED_SECRET }}
         run: |
-          set -euo pipefail
-
-          # ── 1. Get Tapis token ─────────────────────────────────────────────
-          TOKEN_JSON=$(curl -sf -X POST "${TAPIS_BASE}/v3/oauth2/tokens" \
-            -H "Content-Type: application/json" \
-            -d "$(jq -n \
-              --arg u "$TAPIS_USERNAME" \
-              --arg p "$TAPIS_PASSWORD" \
-              '{grant_type:"password",username:$u,password:$p}')")
-
-          TAPIS_TOKEN=$(echo "$TOKEN_JSON" | jq -r '.result.access_token')
-          if [ -z "$TAPIS_TOKEN" ] || [ "$TAPIS_TOKEN" = "null" ]; then
-            echo "::error::Failed to obtain Tapis token"
-            exit 1
-          fi
-
-          # ── 2. Check whether pod already exists ───────────────────────────
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer $TAPIS_TOKEN" \
-            "${TAPIS_BASE}/v3/pods/${POD_ID}")
-
-          if [ "$HTTP_STATUS" = "200" ]; then
-            echo "Pod ${POD_ID} exists — restarting to pick up new image"
-            curl -sf -X POST \
-              -H "Authorization: Bearer $TAPIS_TOKEN" \
-              "${TAPIS_BASE}/v3/pods/${POD_ID}/restart_pod"
-            echo "Restart requested."
-          else
-            echo "Pod ${POD_ID} not found (HTTP ${HTTP_STATUS}) — creating"
-
-            POD_BODY=$(jq -n \
-              --arg pod_id  "$POD_ID" \
-              --arg image   "${{ env.IMAGE }}:latest" \
-              --arg ckan_url "$CKAN_BASE_URL" \
-              --arg secret   "$MCP_HTTP_SHARED_SECRET" \
-              '{
-                pod_id: $pod_id,
-                image: $image,
-                description: "DSO CKAN MCP server (HTTP transport)",
-                environment_variables: {
-                  MCP_TRANSPORT:          "http",
-                  MCP_HTTP_HOST:          "0.0.0.0",
-                  MCP_HTTP_PORT:          "8100",
-                  CKAN_BASE_URL:          $ckan_url,
-                  MCP_HTTP_SHARED_SECRET: $secret
-                },
-                networking: {
-                  protocol: "http",
-                  port: 8100
-                }
-              }')
-
-            curl -sf -X POST \
-              -H "Authorization: Bearer $TAPIS_TOKEN" \
-              -H "Content-Type: application/json" \
-              "${TAPIS_BASE}/v3/pods" \
-              -d "$POD_BODY"
-
-            echo "Pod ${POD_ID} created."
-          fi
+          pip install --quiet tapipy
+          python3 .github/scripts/tapis_deploy.py
 
       - name: Summary
         if: github.event_name != 'pull_request'
