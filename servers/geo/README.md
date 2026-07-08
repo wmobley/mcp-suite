@@ -16,6 +16,27 @@ uv run dso-geo-mcp
 Copy `.env.example` to `.env` and fill in `GEO_ACTOR_ID` (required) and
 `CKAN_URL`.
 
+### HTTP transport (for a long-running consumer such as ckan-agent-api)
+
+By default the server runs over **stdio**. To serve over **HTTP**, set
+`MCP_TRANSPORT=http`. Unlike the CKAN server, the shared secret is **mandatory**
+in HTTP mode (the server refuses to start without it) because the
+`GEO_TAPIS_TOKEN` env fallback grants ambient Abaco compute to any caller that
+can reach the port:
+
+```bash
+MCP_TRANSPORT=http \
+MCP_HTTP_HOST=127.0.0.1 \
+MCP_HTTP_PORT=8200 \
+MCP_HTTP_SHARED_SECRET="$(openssl rand -hex 32)" \
+uv run dso-geo-mcp
+# serves at http://127.0.0.1:8200/mcp ; clients send Authorization: Bearer <secret>
+```
+
+The server also refuses to start if `MCP_HTTP_HOST` is non-loopback while
+`GEO_TAPIS_TOKEN` is set. Never expose the endpoint publicly without a fronting
+auth proxy.
+
 ## Prerequisites
 
 - A pre-registered Tapis Abaco actor running the GHCR image

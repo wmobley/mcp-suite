@@ -14,8 +14,12 @@ LABEL org.opencontainers.image.title="dso-geo GDAL actor" \
       org.opencontainers.image.description="Abaco actor that runs validated GDAL operations with /vsicurl/ HTTP reads" \
       gdal_version="3.9.2"
 
-# No third-party Python deps: actor.py + register_to_ckan.py use only the
-# standard library, and the GDAL CLIs ship in the base image.
+# MODFLOW / rasterio operations require flopy, rasterio, numpy, shapely.
+RUN pip3 install --no-cache-dir \
+    flopy==3.9.3 \
+    rasterio==1.4.3 \
+    numpy==2.2.6 \
+    shapely==2.1.0
 
 # GDAL /vsicurl tuning for CKAN-style download endpoints (redirects, and
 # servers that may not honor HTTP Range). EMPTY_DIR stops GDAL from probing for

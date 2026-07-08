@@ -298,6 +298,233 @@ def _run_clip(
         raise RuntimeError(_scrub(result.stderr[:500]))
 
 
+def _download_to_temp(url: str, suffix: str, read_token: str = "") -> str:
+    """Download *url* to a temp file and return its path. Caller must os.unlink."""
+    import urllib.request as _ur
+    headers: dict[str, str] = {}
+    if read_token:
+        headers["X-Tapis-Token"] = read_token
+    req = urllib.request.Request(url, headers=headers)
+    fd, path = tempfile.mkstemp(suffix=suffix)
+    try:
+        with _ur.urlopen(req, timeout=int(os.environ.get("DOWNLOAD_TIMEOUT", "600"))) as resp:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(resp.read())
+    except Exception:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
+    return path
+
+
+def _run_extract_point(
+    input_url: str,
+    lat: float,
+    lon: float,
+    band: int,
+    read_token: str,
+) -> dict[str, Any]:
+    """Sample a raster GeoTIFF at (lon, lat) using rasterio."""
+    try:
+        import rasterio  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError("rasterio not installed in this actor image") from exc
+
+    tmp = _download_to_temp(input_url, ".tif", read_token)
+    try:
+        with rasterio.open(tmp) as ds:
+            vals = list(ds.sample([(lon, lat)], indexes=band))
+        if not vals:
+            raise RuntimeError("point falls outside raster extent")
+        return {"value": float(vals[0][0]), "lat": lat, "lon": lon, "band": band}
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _run_aggregate_gma(
+    input_url: str,
+    boundary_geojson: dict[str, Any],
+    band: int,
+    gma_id: str,
+    read_token: str,
+) -> dict[str, Any]:
+    """Compute the mean raster value within a GMA polygon."""
+    try:
+        import numpy as np  # type: ignore
+        import rasterio  # type: ignore
+        import rasterio.mask  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError("rasterio / numpy not installed in this actor image") from exc
+
+    tmp = _download_to_temp(input_url, ".tif", read_token)
+    try:
+        with rasterio.open(tmp) as ds:
+            out_image, _ = rasterio.mask.mask(
+                ds, [boundary_geojson], crop=True, nodata=np.nan, indexes=band,
+            )
+            nodata = ds.nodata
+        arr = out_image.astype(float)
+        if nodata is not None:
+            arr[arr == nodata] = np.nan
+        valid = arr[~np.isnan(arr)]
+        if len(valid) == 0:
+            raise RuntimeError("no valid pixels within GMA boundary")
+        return {
+            "value": float(np.mean(valid)),
+            "pixel_count": int(len(valid)),
+            "gma_id": gma_id,
+            "band": band,
+        }
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _run_extract_budget_gma(
+    input_url: str,
+    package: str,
+    gma_id: str,
+    read_token: str,
+) -> dict[str, Any]:
+    """Sum MODFLOW CBC budget flows for *package* across all active cells."""
+    try:
+        import flopy.utils  # type: ignore
+        import numpy as np  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError("flopy / numpy not installed in this actor image") from exc
+
+    pkg = package.upper()
+    _ALLOWED_PKGS = {"DRN", "RIV", "GHB", "WEL", "EVT", "RCH", "CHD", "SFR"}
+    if pkg not in _ALLOWED_PKGS:
+        raise ValueError(f"package {pkg!r} not allowed; permitted: {sorted(_ALLOWED_PKGS)}")
+
+    tmp = _download_to_temp(input_url, ".cbc", read_token)
+    try:
+        for precision in ("double", "single"):
+            cbf = flopy.utils.CellBudgetFile(tmp, precision=precision)
+            records = cbf.get_data(text=pkg)
+            if records:
+                break
+        if not records:
+            available = [t.strip() for t in cbf.textlist]
+            raise RuntimeError(
+                f"package {pkg!r} not found in CBC file; available: {available}"
+            )
+        last = records[-1]
+        if hasattr(last, "q"):
+            total = float(np.sum(last.q))
+        elif isinstance(last, np.ndarray):
+            total = float(np.sum(last))
+        else:
+            total = float(np.sum(np.array(last)))
+        return {
+            "value": total,
+            "package": pkg,
+            "gma_id": gma_id,
+            "time_steps_read": len(records),
+        }
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _run_extract_satthk_gma(
+    input_url: str,
+    layer: int,
+    gma_id: str,
+    read_token: str,
+) -> dict[str, Any]:
+    """Return mean head for *layer* from a MODFLOW HDS binary file.
+
+    Full saturated-thickness (head minus bottom elevation) requires the DIS
+    package geometry, which is not included in the HDS alone.  Pass
+    ``params.grid_uri`` for a future extension; currently returns mean head
+    as a proxy and includes a note in the response.
+    """
+    try:
+        import flopy.utils  # type: ignore
+        import numpy as np  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError("flopy / numpy not installed in this actor image") from exc
+
+    tmp = _download_to_temp(input_url, ".hds", read_token)
+    try:
+        hf = flopy.utils.HeadFile(tmp)
+        all_heads = hf.get_alldata()   # (ntstep, nlay, nrow, ncol)
+        layer_data = all_heads[-1, layer - 1]   # last time step, 1-indexed layer
+        active = layer_data[layer_data > -1e29]
+        if len(active) == 0:
+            raise RuntimeError("no active cells in HDS for specified layer")
+        return {
+            "value": float(np.mean(active)),
+            "layer": layer,
+            "gma_id": gma_id,
+            "note": (
+                "mean head returned; sat-thickness (head-botm) requires "
+                "grid_uri with DIS geometry — not yet implemented"
+            ),
+        }
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _run_hds_to_geotiff(
+    input_url: str,
+    layer: int,
+    stress_period: int,
+    timestep: int,
+    output_path: Path,
+    read_token: str,
+) -> None:
+    """Convert a MODFLOW HDS binary file to a single-band GeoTIFF."""
+    try:
+        import flopy.utils  # type: ignore
+        import numpy as np  # type: ignore
+        import rasterio  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError("flopy / numpy / rasterio not installed in this actor image") from exc
+
+    tmp = _download_to_temp(input_url, ".hds", read_token)
+    try:
+        hf = flopy.utils.HeadFile(tmp)
+        kstpkper = (timestep - 1, stress_period - 1)  # flopy uses 0-indexed
+        try:
+            head = hf.get_data(kstpkper=kstpkper)
+        except Exception:
+            head = hf.get_alldata()[-1]
+        layer_data = head[layer - 1].astype(np.float32)
+        layer_data[layer_data < -1e29] = np.nan   # mask HDRY / inactive
+        nrow, ncol = layer_data.shape
+        # Pixel-space transform; real CRS/extent requires the DIS package geometry.
+        transform = rasterio.transform.from_bounds(0, 0, ncol, nrow, ncol, nrow)
+        with rasterio.open(
+            str(output_path), "w",
+            driver="GTiff", height=nrow, width=ncol,
+            count=1, dtype=np.float32,
+            crs="EPSG:4326",   # placeholder — override when grid_uri is available
+            transform=transform,
+            nodata=np.nan,
+        ) as dst:
+            dst.write(layer_data, 1)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
 def _run_overviews(
     vsicurl_path: str,
     output_path: Path,
@@ -443,6 +670,64 @@ def main() -> None:
 
         if op == "gdalinfo":
             metadata_result = _run_gdalinfo(vsicurl_path, include_stats, extra_env)
+
+        elif op == "extract_point":
+            lat = float(params.get("lat", 0))
+            lon = float(params.get("lon", 0))
+            band = int(params.get("band", 1))
+            try:
+                response.update(_run_extract_point(input_url, lat, lon, band, read_token))
+            except (RuntimeError, ValueError) as exc:
+                print(json.dumps({"status": "error", "message": str(exc)}))
+                sys.exit(1)
+
+        elif op == "aggregate_gma":
+            boundary = params.get("boundary_geojson")
+            if boundary is None:
+                print(json.dumps({"status": "error",
+                                  "message": "params.boundary_geojson required for aggregate_gma"}))
+                sys.exit(1)
+            band = int(params.get("band", 1))
+            gma_id = str(params.get("gma_id", ""))
+            try:
+                response.update(_run_aggregate_gma(input_url, boundary, band, gma_id, read_token))
+            except (RuntimeError, ValueError) as exc:
+                print(json.dumps({"status": "error", "message": str(exc)}))
+                sys.exit(1)
+
+        elif op == "extract_budget_gma":
+            package = str(params.get("package", "DRN"))
+            gma_id = str(params.get("gma_id", ""))
+            try:
+                response.update(_run_extract_budget_gma(input_url, package, gma_id, read_token))
+            except (RuntimeError, ValueError) as exc:
+                print(json.dumps({"status": "error", "message": str(exc)}))
+                sys.exit(1)
+
+        elif op == "extract_satthk_gma":
+            layer = int(params.get("layer", 1))
+            gma_id = str(params.get("gma_id", ""))
+            try:
+                response.update(_run_extract_satthk_gma(input_url, layer, gma_id, read_token))
+            except (RuntimeError, ValueError) as exc:
+                print(json.dumps({"status": "error", "message": str(exc)}))
+                sys.exit(1)
+
+        elif op == "hds_to_geotiff":
+            try:
+                out_name = validate_output_name(output_name_raw or "head_output.tif")
+            except ValueError as exc:
+                print(json.dumps({"status": "error", "message": str(exc)}))
+                sys.exit(1)
+            output_path = _output_dir() / out_name
+            layer = int(params.get("layer", 1))
+            sp = int(params.get("stress_period", 1))
+            ts = int(params.get("timestep", 1))
+            try:
+                _run_hds_to_geotiff(input_url, layer, sp, ts, output_path, read_token)
+            except (RuntimeError, ValueError) as exc:
+                print(json.dumps({"status": "error", "message": str(exc)}))
+                sys.exit(1)
 
         else:
             # All other ops produce an output file — validate output_name
