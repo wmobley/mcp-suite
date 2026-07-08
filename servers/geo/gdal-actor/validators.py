@@ -26,9 +26,12 @@ from urllib.parse import urlparse
 # Constants
 # ---------------------------------------------------------------------------
 
-ALLOWED_OPERATIONS: frozenset[str] = frozenset(
-    ["gdalinfo", "reproject", "cog", "clip", "overviews"]
-)
+ALLOWED_OPERATIONS: frozenset[str] = frozenset([
+    "gdalinfo", "reproject", "cog", "clip", "overviews",
+    # MODFLOW / rasterio operations (require flopy + rasterio in image)
+    "extract_point", "aggregate_gma",
+    "extract_budget_gma", "extract_satthk_gma", "hds_to_geotiff",
+])
 
 _COMPRESSION_ENUM: frozenset[str] = frozenset(["deflate", "lzw", "zstd", "none"])
 

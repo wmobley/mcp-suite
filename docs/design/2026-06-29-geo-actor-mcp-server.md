@@ -2,7 +2,12 @@
 
 ## Status
 
-**Approved** (2026-06-30) — Approved by user; implementation may begin with the Phase-0a proof-of-life (a hard Go/No-Go gate). FINAL design (after the panel review AND the user's 2026-06-30 directives — see Decisions 15–18 / Superseded S1–S5, which take precedence over the earlier Decisions 1–14 where they conflict):
+**Approved — Phase-0a PASSED (2026-06-30, GO).** Proof-of-life on the live `portals.tapis.io` tenant: the public GHCR image `ghcr.io/wmobley/mcp-suite/gdal-actor` was **registered → READY → executed → polled to COMPLETE, and its stdout (our `actor.py` structured JSON) retrieved via the executions/logs endpoint** (PASS=5/5). Full compute path validated: Abaco runs our image, the `MSG` env contract works, structured JSON output works, log retrieval works.
+- **Pipeline-shape RESOLVED → single-actor mode** (supersedes the 2-stage HTTP-triggered pipeline): the actor does GDAL **and** the CKAN register in ONE execution (message carries a `ckan` block) — no HTTP-triggered chaining needed; already supported by the built image.
+- **dso-geo runtime model**: a PRE-REGISTERED persistent actor (the GHCR image registered once, referenced by env `GEO_ACTOR_ID`), not register-per-call. dso-geo submits a message → polls the execution → reads logs for the actor's JSON result.
+- **Remaining live confirmation (NOT blocking the server build)**: checks 5–6 — real `gdalinfo`/transform over `/vsicurl/` against a TACC-routable CKAN URL + actor egress (`/vsicurl` already verified offline).
+
+FINAL design (after the panel review AND the user's 2026-06-30 directives — see Decisions 15–18 / Superseded S1–S5, which take precedence over the earlier Decisions 1–14 where they conflict):
 - **CKAN-linked**: dso-geo HAS a CKAN client; tools take CKAN resource/dataset IDs; the Abaco pipeline registers outputs back to CKAN automatically (supersedes the earlier "no CKAN client / hand-back-to-model").
 - **Data access via `/vsicurl/`**: GDAL reads the source over the CKAN download URL (HTTP range reads); no Corral POSIX mount. Output uploaded+registered to CKAN by a pipeline task.
 - **Compute = Abaco Actors only** (Tapis Jobs rejected for v1). Transforms run as an Abaco actor pipeline (GDAL stage → register-to-CKAN task).
