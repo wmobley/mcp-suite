@@ -14,12 +14,15 @@ LABEL org.opencontainers.image.title="dso-geo GDAL actor" \
       org.opencontainers.image.description="Abaco actor that runs validated GDAL operations with /vsicurl/ HTTP reads" \
       gdal_version="3.9.2"
 
-# MODFLOW / rasterio operations require flopy, rasterio, numpy, shapely.
-RUN pip3 install --no-cache-dir \
-    flopy==3.9.3 \
-    rasterio==1.4.3 \
-    numpy==2.2.6 \
-    shapely==2.1.0
+# ubuntu-small does not ship pip3; install it then pull MODFLOW/raster deps.
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends python3-pip && \
+    rm -rf /var/lib/apt/lists/* && \
+    pip3 install --no-cache-dir \
+        flopy==3.9.3 \
+        rasterio==1.4.3 \
+        numpy==2.2.6 \
+        shapely==2.1.0
 
 # GDAL /vsicurl tuning for CKAN-style download endpoints (redirects, and
 # servers that may not honor HTTP Range). EMPTY_DIR stops GDAL from probing for
