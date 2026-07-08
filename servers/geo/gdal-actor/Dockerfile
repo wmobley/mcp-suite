@@ -14,11 +14,14 @@ LABEL org.opencontainers.image.title="dso-geo GDAL actor" \
       org.opencontainers.image.description="Abaco actor that runs validated GDAL operations with /vsicurl/ HTTP reads" \
       gdal_version="3.9.2"
 
-# ubuntu-small does not ship pip3; install it then pull MODFLOW/raster deps.
+# ubuntu-small (Ubuntu 24.04) does not ship pip3, and pip enforces PEP 668
+# (externally-managed-environment). Install pip then pass --break-system-packages
+# so pip can install into the system Python inside the container.
+# rasterio wheels bundle their own GDAL, so no libgdal-dev needed.
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends python3-pip && \
     rm -rf /var/lib/apt/lists/* && \
-    pip3 install --no-cache-dir \
+    pip3 install --no-cache-dir --break-system-packages \
         flopy==3.9.3 \
         rasterio==1.4.3 \
         numpy==2.2.6 \
