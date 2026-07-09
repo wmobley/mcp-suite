@@ -86,7 +86,9 @@ class Settings:
     """Runtime configuration loaded from environment variables."""
 
     # ── Track A (read path) ────────────────────────────────────────────────
-    ckan_url: str = field(default_factory=lambda: os.environ.get("CKAN_URL", "http://localhost:5001"))
+    ckan_url: str = field(default_factory=lambda: (
+        os.environ.get("CKAN_URL") or os.environ.get("CKAN_BASE_URL") or "http://localhost:5001"
+    ))
     schema_cache_ttl: int = field(
         default_factory=lambda: int(os.environ.get("SCHEMA_CACHE_TTL", "3600"))
     )
