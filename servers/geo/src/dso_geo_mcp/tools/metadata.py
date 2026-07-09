@@ -28,7 +28,7 @@ from typing import Any
 import fastmcp
 
 from ..audit import log_submit
-from ..ckan_resolve import CKANResolveError, resolve_dataset_raster_urls, resolve_resource_url
+from ..ckan_resolve import CKANResolveError, _validate_url_ssrf, resolve_dataset_raster_urls, resolve_resource_url
 from ..config import settings
 from ..message import build_gdalinfo_message
 from ..tapis_client import TapisError, submit_message
@@ -109,6 +109,79 @@ def register(mcp: fastmcp.FastMCP) -> None:
             actor_id=actor_id,
             operation="gdalinfo",
             resource_id=resource_id,
+            execution_id=execution_id,
+        )
+
+        return {
+            "execution_id": execution_id,
+            "status": "SUBMITTED",
+            "note": "Poll with get_execution_status(execution_id) to retrieve metadata.",
+        }
+
+    @mcp.tool()
+    def gdalinfo_from_url(
+        url: str,
+        include_stats: bool = False,
+        tapis_token: str | None = None,
+    ) -> dict[str, Any]:
+        """Extract GDAL metadata from a raster at a direct HTTPS URL via gdalinfo (Tapis Abaco Actor).
+
+        Unlike gdalinfo_extract (which resolves a CKAN resource ID), this tool accepts
+        any HTTPS URL — for example, a temp file served by the CKAN Agent API while
+        datasets are being registered.  The URL is SSRF-validated against the configured
+        GEO_ALLOWED_AGENT_HOST before submission.
+
+        Args:
+            url: HTTPS URL of the raster file (e.g. from the CKAN Agent API upload server).
+                 Must match the GEO_ALLOWED_AGENT_HOST allowlist.
+            include_stats: Whether to compute band statistics (slower). Default False for
+                           fast metadata-only reads during registration.
+            tapis_token: Tapis JWT for Abaco API access. Falls back to GEO_TAPIS_TOKEN env var.
+
+        Returns:
+            {"execution_id": "<id>", "status": "SUBMITTED", "note": "..."}
+            Poll with get_execution_status(execution_id) to retrieve metadata.
+        """
+        token = (tapis_token or "").strip() or (settings.geo_tapis_token or "")
+
+        actor_id = settings.geo_actor_id
+        if not actor_id:
+            return {"error": "GEO_ACTOR_ID is not configured"}
+
+        # SSRF guard: block private/loopback IPs unconditionally; restrict to the configured
+        # Agent API hostname when GEO_ALLOWED_AGENT_HOST is set (tighter production guard).
+        try:
+            _validate_url_ssrf(url, settings.allowed_agent_host)
+        except ValueError as exc:
+            return {"error": f"URL rejected by SSRF guard: {exc}"}
+
+        msg = build_gdalinfo_message(
+            input_url=url,
+            include_stats=include_stats,
+            read_token=token or None,
+        )
+
+        if not token:
+            return {
+                "error": "tapis_token is required to submit to Abaco",
+                "hint": "Provide tapis_token argument or set GEO_TAPIS_TOKEN env var",
+            }
+
+        try:
+            execution_id = submit_message(
+                actor_id=actor_id,
+                message_dict=msg,
+                token=token,
+                tapis_base=settings.tapis_base,
+            )
+        except TapisError as exc:
+            return {"error": f"Abaco submission failed: {exc}"}
+
+        log_submit(
+            tool="gdalinfo_from_url",
+            actor_id=actor_id,
+            operation="gdalinfo",
+            resource_id=url,
             execution_id=execution_id,
         )
 

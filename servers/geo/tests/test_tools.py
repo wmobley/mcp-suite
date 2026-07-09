@@ -125,6 +125,70 @@ class TestTransformNoToken:
 # Metadata tools: build + submit
 # ---------------------------------------------------------------------------
 
+AGENT_API_HOST = "dsoagentapi.pods.portals.tapis.io"
+AGENT_FILE_URL = f"https://{AGENT_API_HOST}/v1/uploads/abc123/odm_orthophoto.tif"
+
+
+class TestGdalinfoFromUrl:
+    @resp_lib.activate
+    def test_returns_execution_id_for_valid_url(self, monkeypatch):
+        import os
+        monkeypatch.setenv("GEO_ALLOWED_AGENT_HOST", AGENT_API_HOST)
+        # reload settings singleton so the new env var is picked up
+        import importlib
+        from dso_geo_mcp import config as cfg_mod
+        importlib.reload(cfg_mod)
+        from dso_geo_mcp.tools import metadata
+        importlib.reload(metadata)
+
+        resp_lib.add(resp_lib.POST, f"{TAPIS_BASE}/v3/actors/{ACTOR_ID}/messages", json=_SUBMIT_OK, status=200)
+        fn = _tools_of(metadata)["gdalinfo_from_url"]
+        result = fn(url=AGENT_FILE_URL, tapis_token=TOKEN)
+        assert result.get("execution_id") == EXEC_ID
+        assert result.get("status") == "SUBMITTED"
+
+    def test_rejects_private_ip_url(self, monkeypatch):
+        import importlib
+        import os
+        monkeypatch.setenv("GEO_ALLOWED_AGENT_HOST", AGENT_API_HOST)
+        from dso_geo_mcp import config as cfg_mod
+        importlib.reload(cfg_mod)
+        from dso_geo_mcp.tools import metadata
+        importlib.reload(metadata)
+
+        fn = _tools_of(metadata)["gdalinfo_from_url"]
+        result = fn(url="https://10.0.0.1/secret.tif", tapis_token=TOKEN)
+        assert "error" in result
+
+    def test_rejects_wrong_host(self, monkeypatch):
+        import importlib
+        import os
+        monkeypatch.setenv("GEO_ALLOWED_AGENT_HOST", AGENT_API_HOST)
+        from dso_geo_mcp import config as cfg_mod
+        importlib.reload(cfg_mod)
+        from dso_geo_mcp.tools import metadata
+        importlib.reload(metadata)
+
+        fn = _tools_of(metadata)["gdalinfo_from_url"]
+        result = fn(url="https://evil.example.com/file.tif", tapis_token=TOKEN)
+        assert "error" in result
+
+    def test_allows_public_url_when_host_not_configured(self, monkeypatch):
+        import importlib
+        monkeypatch.delenv("GEO_ALLOWED_AGENT_HOST", raising=False)
+        from dso_geo_mcp import config as cfg_mod
+        importlib.reload(cfg_mod)
+        from dso_geo_mcp.tools import metadata
+        importlib.reload(metadata)
+
+        # Without GEO_ALLOWED_AGENT_HOST, any public HTTPS URL is accepted (private IPs still blocked).
+        # The tool proceeds to the token check before the Abaco submission.
+        fn = _tools_of(metadata)["gdalinfo_from_url"]
+        result = fn(url=AGENT_FILE_URL, tapis_token=None)
+        # Fails on missing token, not on SSRF — proves the URL passed the guard
+        assert result.get("error", "").startswith("tapis_token is required")
+
+
 class TestMetadataTools:
     @resp_lib.activate
     def test_gdalinfo_extract_returns_execution_id(self):

@@ -87,6 +87,11 @@ class Settings:
     geo_allowed_ckan_host: str = field(
         default_factory=lambda: os.environ.get("GEO_ALLOWED_CKAN_HOST", "")
     )
+    # SSRF guard for gdalinfo_from_url: direct temp-file URLs must come from this host.
+    # Set to the public hostname of the CKAN Agent API (e.g. dsoagentapi.pods.portals.tapis.io).
+    geo_allowed_agent_host: str = field(
+        default_factory=lambda: os.environ.get("GEO_ALLOWED_AGENT_HOST", "")
+    )
 
     # ── Polling ───────────────────────────────────────────────────────────────
     geo_poll_timeout_s: int = field(
@@ -121,6 +126,11 @@ class Settings:
         if self.geo_allowed_ckan_host:
             return self.geo_allowed_ckan_host.lower()
         return _hostname(self.ckan_url)
+
+    @property
+    def allowed_agent_host(self) -> str:
+        """Hostname the CKAN Agent API is reachable on (for gdalinfo_from_url SSRF guard)."""
+        return self.geo_allowed_agent_host.lower()
 
     @property
     def is_production(self) -> bool:
