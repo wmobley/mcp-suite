@@ -1,0 +1,102 @@
+name: build-langsmith-mcp
+
+# Build and push the DSO LangSmith MCP server image to GHCR, then
+# register or restart the dsolangsmith pod on portals.tapis.io.
+#
+# Required GitHub secrets (in the "Tapis Configure" environment):
+#   TAPIS_USERNAME          — Tapis portal username
+#   TAPIS_PASSWORD          — Tapis portal password
+#   LANGSMITH_API_KEY       — LangSmith API key (lsv2_pt_...)
+#   MCP_HTTP_SHARED_SECRET  — shared secret for MCP HTTP endpoint auth
+#
+# The GHCR package must be set to PUBLIC so Tapis pods can pull it
+# without image-pull credentials. Set this once via:
+#   GitHub → Packages → langsmith-mcp → Package settings → Change visibility
+#
+# Build context: servers/langsmith/
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "servers/langsmith/**"
+      - ".github/workflows/build-langsmith-mcp.yml"
+      - ".github/scripts/**"
+    tags:
+      - "v*"
+  pull_request:
+    paths:
+      - "servers/langsmith/**"
+      - ".github/workflows/build-langsmith-mcp.yml"
+      - ".github/scripts/**"
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}/langsmith-mcp
+  POD_ID: dsolangsmith
+  TAPIS_BASE: https://portals.tapis.io
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: Tapis Configure
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: servers/langsmith
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy to Tapis pod
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          TAPIS_USERNAME: ${{ secrets.TAPIS_USERNAME }}
+          TAPIS_PASSWORD: ${{ secrets.TAPIS_PASSWORD }}
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+          MCP_HTTP_SHARED_SECRET: ${{ secrets.MCP_HTTP_SHARED_SECRET }}
+        run: |
+          pip install --quiet tapipy
+          python3 .github/scripts/tapis_deploy_langsmith.py
+
+      - name: Summary
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "## langsmith-mcp build complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "Pushed image tags:" >> "$GITHUB_STEP_SUMMARY"
+          echo '${{ steps.meta.outputs.tags }}' | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Tapis pod: \`${POD_ID}\` on \`portals.tapis.io\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "URL: https://${POD_ID}.pods.portals.tapis.io/mcp" >> "$GITHUB_STEP_SUMMARY"
