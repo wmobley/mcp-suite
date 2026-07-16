@@ -89,6 +89,7 @@ jobs:
           TAPIS_PASSWORD: ${{ secrets.TAPIS_PASSWORD }}
           CKAN_BASE_URL: ${{ secrets.CKAN_BASE_URL }}
           MCP_HTTP_SHARED_SECRET: ${{ secrets.MCP_HTTP_SHARED_SECRET }}
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
         run: |
           pip install --quiet tapipy
           python3 .github/scripts/tapis_deploy.py

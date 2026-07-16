@@ -12,6 +12,7 @@ dependencies = [
     "requests>=2.28.0",
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
+    "langsmith>=0.2.0",
 ]
 
 [project.optional-dependencies]

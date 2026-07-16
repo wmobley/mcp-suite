@@ -15,10 +15,11 @@ from tapipy.tapis import Tapis
 base_url   = "https://portals.tapis.io"
 username   = os.environ["TAPIS_USERNAME"]
 password   = os.environ["TAPIS_PASSWORD"]
-pod_id     = os.environ["POD_ID"]
-image      = os.environ["IMAGE"].lower() + ":latest"
-ckan_url   = os.environ.get("CKAN_BASE_URL", "")
-mcp_secret = os.environ.get("MCP_HTTP_SHARED_SECRET", "")
+pod_id      = os.environ["POD_ID"]
+image       = os.environ["IMAGE"].lower() + ":latest"
+ckan_url    = os.environ.get("CKAN_BASE_URL", "")
+mcp_secret  = os.environ.get("MCP_HTTP_SHARED_SECRET", "")
+ls_api_key  = os.environ.get("LANGSMITH_API_KEY", "")
 
 print(f"Authenticating to {base_url} as {username}")
 t = Tapis(base_url=base_url, username=username, password=password)
@@ -54,6 +55,7 @@ else:
             "MCP_HTTP_PORT":          "8100",
             "CKAN_BASE_URL":          ckan_url,
             "MCP_HTTP_SHARED_SECRET": mcp_secret,
+            "LANGSMITH_API_KEY":      ls_api_key,
         },
         networking={"default": {"protocol": "http", "port": 8100}},
     )

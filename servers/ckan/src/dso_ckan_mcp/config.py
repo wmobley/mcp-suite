@@ -117,6 +117,18 @@ class Settings:
         default_factory=lambda: int(os.environ.get("MCP_MAX_UPLOAD_MB", "90"))
     )
 
+    # ── LangSmith ──────────────────────────────────────────────────────────────
+    # Optional — when set, LangSmith tools are registered alongside CKAN tools.
+    # Value is stored but NEVER logged.
+    langsmith_api_key: str | None = field(
+        default_factory=lambda: os.environ.get("LANGSMITH_API_KEY") or None
+    )
+    langsmith_endpoint: str = field(
+        default_factory=lambda: os.environ.get(
+            "LANGSMITH_ENDPOINT", "https://api.smith.langchain.com"
+        ).rstrip("/")
+    )
+
     # ── Transport ──────────────────────────────────────────────────────────
     # "stdio" (default) for local MCP clients; "http" to serve over HTTP so a
     # long-running consumer (e.g. ckan-agent-api) can connect as an MCP client.

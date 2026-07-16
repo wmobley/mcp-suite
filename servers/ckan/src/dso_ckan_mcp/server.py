@@ -33,7 +33,7 @@ from . import prompts, resources
 from .ckan_client import CKANClient
 from .config import settings
 from .schema_loader import SchemaLoader
-from .tools import read, schema, validation, write
+from .tools import read, schema, validation, write, langsmith as langsmith_tools
 
 # Configure logging to stderr so tool results (stdout) are clean.
 logging.basicConfig(
@@ -89,6 +89,18 @@ resources.register(mcp, _client, ttl=settings.schema_cache_ttl)
 
 # Track B — write tools (token-gated, dry-run-first).
 write.register(mcp, _client, _loader, settings)
+
+# LangSmith tools — registered only when LANGSMITH_API_KEY is configured.
+if settings.langsmith_api_key:
+    from .langsmith_client import LangSmithClient as _LSClient
+    _ls_client = _LSClient(
+        api_key=settings.langsmith_api_key,
+        endpoint=settings.langsmith_endpoint,
+    )
+    langsmith_tools.register(mcp, _ls_client)
+    logger.info("LangSmith tools registered (endpoint=%s)", settings.langsmith_endpoint)
+else:
+    logger.info("LANGSMITH_API_KEY not set — LangSmith tools not registered")
 
 
 # ------------------------------------------------------------------
