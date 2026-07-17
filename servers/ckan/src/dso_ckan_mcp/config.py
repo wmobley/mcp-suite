@@ -170,16 +170,17 @@ class Settings:
         # TODO (prod): warn if configured token is sysadmin — sysadmin tokens
         # have broader permissions than needed; prefer an editor-role token.
         token_status = "[SET]" if self.ckan_api_token else "[NOT SET]"
-        writes_enabled = bool(self.ckan_api_token)
+        # Write tools are always registered; the static token is a fallback only.
+        # Per-call tapis_token (passed by the agent from the user's JWT) takes precedence.
         logger.info(
             "DSO CKAN MCP Server starting — CKAN_URL=%s  env=%s  CKAN_API_TOKEN=%s  "
-            "write_tools=%s",
+            "write_tools=enabled (token resolved per-call; static fallback %s)",
             self.ckan_url,
             self.env_label,
             token_status,
-            "enabled" if writes_enabled else "disabled (no token)",
+            "set" if self.ckan_api_token else "not set",
         )
-        if self.is_production and writes_enabled:
+        if self.is_production and self.mcp_allow_prod_writes:
             logger.warning(
                 "TARGETING PRODUCTION CKAN (%s) — writes are LIVE. "
                 "MCP_ALLOW_PROD_WRITES=%s",
