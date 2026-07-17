@@ -24,14 +24,14 @@ on:
     paths:
       - "servers/ckan/**"
       - ".github/workflows/build-ckan-mcp.yml"
-      - ".github/scripts/**"
+      - ".github/scripts/tapis_deploy.py"
     tags:
       - "v*"
   pull_request:
     paths:
       - "servers/ckan/**"
       - ".github/workflows/build-ckan-mcp.yml"
-      - ".github/scripts/**"
+      - ".github/scripts/tapis_deploy.py"
   workflow_dispatch:
 
 env:

@@ -21,14 +21,14 @@ on:
     paths:
       - "servers/langsmith/**"
       - ".github/workflows/build-langsmith-mcp.yml"
-      - ".github/scripts/**"
+      - ".github/scripts/tapis_deploy_langsmith.py"
     tags:
       - "v*"
   pull_request:
     paths:
       - "servers/langsmith/**"
       - ".github/workflows/build-langsmith-mcp.yml"
-      - ".github/scripts/**"
+      - ".github/scripts/tapis_deploy_langsmith.py"
   workflow_dispatch:
 
 env:
