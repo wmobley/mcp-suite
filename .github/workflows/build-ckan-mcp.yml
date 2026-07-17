@@ -9,6 +9,7 @@ name: build-ckan-mcp
 #
 # Optional pod env-var secrets (add as needed):
 #   CKAN_BASE_URL           — CKAN portal URL
+#   CKAN_API_TOKEN          — Tapis JWT for authenticated CKAN writes (enables write tools)
 #   MCP_HTTP_SHARED_SECRET  — shared secret for MCP HTTP endpoint auth
 #   MCP_ALLOW_PROD_WRITES   — set "true" to allow live writes to a non-localhost CKAN_URL
 #
@@ -89,6 +90,7 @@ jobs:
           TAPIS_USERNAME: ${{ secrets.TAPIS_USERNAME }}
           TAPIS_PASSWORD: ${{ secrets.TAPIS_PASSWORD }}
           CKAN_BASE_URL: ${{ secrets.CKAN_BASE_URL }}
+          CKAN_API_TOKEN: ${{ secrets.CKAN_API_TOKEN }}
           MCP_HTTP_SHARED_SECRET: ${{ secrets.MCP_HTTP_SHARED_SECRET }}
           LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
           MCP_ALLOW_PROD_WRITES: ${{ secrets.MCP_ALLOW_PROD_WRITES }}

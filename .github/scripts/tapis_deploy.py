@@ -5,6 +5,7 @@ Environment variables set by the workflow:
   POD_ID                          — Tapis pod identifier
   IMAGE                           — GHCR image name (without tag)
   CKAN_BASE_URL                   — forwarded to pod env
+  CKAN_API_TOKEN                  — forwarded to pod env (Tapis JWT for CKAN write auth)
   MCP_HTTP_SHARED_SECRET          — forwarded to pod env
   MCP_ALLOW_PROD_WRITES           — forwarded to pod env (set "true" for prod)
 """
@@ -19,6 +20,7 @@ password           = os.environ["TAPIS_PASSWORD"]
 pod_id             = os.environ["POD_ID"]
 image              = os.environ["IMAGE"].lower() + ":latest"
 ckan_url           = os.environ.get("CKAN_BASE_URL", "")
+ckan_api_token     = os.environ.get("CKAN_API_TOKEN", "")
 mcp_secret         = os.environ.get("MCP_HTTP_SHARED_SECRET", "")
 ls_api_key         = os.environ.get("LANGSMITH_API_KEY", "")
 allow_prod_writes  = os.environ.get("MCP_ALLOW_PROD_WRITES", "false")
@@ -28,6 +30,7 @@ POD_ENV = {
     "MCP_HTTP_HOST":          "0.0.0.0",
     "MCP_HTTP_PORT":          "8100",
     "CKAN_BASE_URL":          ckan_url,
+    "CKAN_API_TOKEN":         ckan_api_token,
     "MCP_HTTP_SHARED_SECRET": mcp_secret,
     "LANGSMITH_API_KEY":      ls_api_key,
     "MCP_ALLOW_PROD_WRITES":  allow_prod_writes,
