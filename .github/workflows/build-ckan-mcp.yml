@@ -10,6 +10,7 @@ name: build-ckan-mcp
 # Optional pod env-var secrets (add as needed):
 #   CKAN_BASE_URL           — CKAN portal URL
 #   MCP_HTTP_SHARED_SECRET  — shared secret for MCP HTTP endpoint auth
+#   MCP_ALLOW_PROD_WRITES   — set "true" to allow live writes to a non-localhost CKAN_URL
 #
 # The GHCR package must be set to PUBLIC so Tapis pods can pull it
 # without image-pull credentials. Set this once via:
@@ -90,6 +91,7 @@ jobs:
           CKAN_BASE_URL: ${{ secrets.CKAN_BASE_URL }}
           MCP_HTTP_SHARED_SECRET: ${{ secrets.MCP_HTTP_SHARED_SECRET }}
           LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+          MCP_ALLOW_PROD_WRITES: ${{ secrets.MCP_ALLOW_PROD_WRITES }}
         run: |
           pip install --quiet tapipy
           python3 .github/scripts/tapis_deploy.py

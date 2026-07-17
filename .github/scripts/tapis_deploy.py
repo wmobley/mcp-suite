@@ -6,20 +6,32 @@ Environment variables set by the workflow:
   IMAGE                           — GHCR image name (without tag)
   CKAN_BASE_URL                   — forwarded to pod env
   MCP_HTTP_SHARED_SECRET          — forwarded to pod env
+  MCP_ALLOW_PROD_WRITES           — forwarded to pod env (set "true" for prod)
 """
 import os
 import sys
 
 from tapipy.tapis import Tapis
 
-base_url   = "https://portals.tapis.io"
-username   = os.environ["TAPIS_USERNAME"]
-password   = os.environ["TAPIS_PASSWORD"]
-pod_id      = os.environ["POD_ID"]
-image       = os.environ["IMAGE"].lower() + ":latest"
-ckan_url    = os.environ.get("CKAN_BASE_URL", "")
-mcp_secret  = os.environ.get("MCP_HTTP_SHARED_SECRET", "")
-ls_api_key  = os.environ.get("LANGSMITH_API_KEY", "")
+base_url           = "https://portals.tapis.io"
+username           = os.environ["TAPIS_USERNAME"]
+password           = os.environ["TAPIS_PASSWORD"]
+pod_id             = os.environ["POD_ID"]
+image              = os.environ["IMAGE"].lower() + ":latest"
+ckan_url           = os.environ.get("CKAN_BASE_URL", "")
+mcp_secret         = os.environ.get("MCP_HTTP_SHARED_SECRET", "")
+ls_api_key         = os.environ.get("LANGSMITH_API_KEY", "")
+allow_prod_writes  = os.environ.get("MCP_ALLOW_PROD_WRITES", "false")
+
+POD_ENV = {
+    "MCP_TRANSPORT":          "http",
+    "MCP_HTTP_HOST":          "0.0.0.0",
+    "MCP_HTTP_PORT":          "8100",
+    "CKAN_BASE_URL":          ckan_url,
+    "MCP_HTTP_SHARED_SECRET": mcp_secret,
+    "LANGSMITH_API_KEY":      ls_api_key,
+    "MCP_ALLOW_PROD_WRITES":  allow_prod_writes,
+}
 
 print(f"Authenticating to {base_url} as {username}")
 t = Tapis(base_url=base_url, username=username, password=password)
@@ -40,23 +52,17 @@ except Exception as e:
         sys.exit(1)
 
 if pod_exists:
-    print(f"Pod {pod_id} exists — restarting to pick up new image")
+    print(f"Pod {pod_id} exists — updating env vars and restarting")
+    t.pods.update_pod(pod_id=pod_id, environment_variables=POD_ENV)
     t.pods.restart_pod(pod_id=pod_id)
-    print("Restart requested.")
+    print("Update + restart requested.")
 else:
     print(f"Pod {pod_id} not found — creating")
     t.pods.create_pod(
         pod_id=pod_id,
         image=image,
         description="DSO CKAN MCP server (HTTP transport)",
-        environment_variables={
-            "MCP_TRANSPORT":          "http",
-            "MCP_HTTP_HOST":          "0.0.0.0",
-            "MCP_HTTP_PORT":          "8100",
-            "CKAN_BASE_URL":          ckan_url,
-            "MCP_HTTP_SHARED_SECRET": mcp_secret,
-            "LANGSMITH_API_KEY":      ls_api_key,
-        },
+        environment_variables=POD_ENV,
         networking={"default": {"protocol": "http", "port": 8100}},
     )
     print(f"Pod {pod_id} created.")
